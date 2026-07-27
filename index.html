@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Cat Push</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: monospace;
+  }
+
+  .tv-frame {
+    position: relative;
+    width: 940px;
+    height: 640px;
+    background: #2b2b2b;
+    border-radius: 28px;
+    box-shadow:
+      inset 0 0 0 6px #444,
+      0 0 30px rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #gameCanvas {
+    width: 900px;
+    height: 600px;
+    background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 100%);
+    border-radius: 6px;
+    filter: contrast(1.1) brightness(1.05);
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    -ms-interpolation-mode: nearest-neighbor;
+  }
+
+  /* Скан-линии поверх canvas — эффект ЭЛТ */
+  .scanlines {
+    position: absolute;
+    width: 900px;
+    height: 600px;
+    border-radius: 6px;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.1) 0px,
+      rgba(0, 0, 0, 0.1) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+  }
+</style>
+</head>
+<body>
+  <div class="tv-frame">
+    <canvas id="gameCanvas" width="900" height="600"></canvas>
+    <div class="scanlines"></div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const SHELF_Y = 420;
+  const SHELF_HEIGHT = 20;
+  const SHELF_MARGIN = 20;
+
+  const cat = {
+    x: 430,
+    y: SHELF_Y - 40,
+    width: 40,
+    height: 40,
+    speed: 4
+  };
+
+  const keys = {};
+
+  // Палитра — 16 цветов на всю игру, общая для кота, предметов и фона
+  const palette = {
+    catOrange: '#FF8C00',
+    catBlack: '#000000',
+    catWhite: '#FFFFFF',
+    catPink: '#FFB6C1',
+    mugBrown: '#8B4513',
+    flowerPink: '#FF69B4',
+    flowerGreen: '#228B22',
+    potBrown: '#5C3A21',
+    foodYellow: '#FFD700',
+    foodOrange: '#FFA500',
+    vaseBlue: '#4169E1',
+    tvGray: '#808080',
+    tvScreen: '#2F4F4F',
+    shelfBrown: '#6B4226',
+    wallpaperBase: '#241F2E',
+    wallpaperAccent: '#332B40'
+  };
+
+  // Не даём стрелкам и пробелу скроллить страницу, заодно отслеживаем нажатия
+  const controlKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', ' '];
+  window.addEventListener('keydown', (e) => {
+    keys[e.key] = true;
+    keys[e.code] = true;
+    if (controlKeys.includes(e.code) || controlKeys.includes(e.key)) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+  window.addEventListener('keyup', (e) => {
+    keys[e.key] = false;
+    keys[e.code] = false;
+  });
+
+  let score = 0;
+
+  function updateCat(deltaTime) {
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) cat.x -= cat.speed * deltaTime;
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) cat.x += cat.speed * deltaTime;
+    const minX = SHELF_MARGIN;
+    const maxX = canvas.width - SHELF_MARGIN - cat.width;
+    cat.x = Math.max(minX, Math.min(maxX, cat.x));
+  }
+
+  function drawBackground() {
+    ctx.fillStyle = palette.wallpaperBase;
+    ctx.fillRect(0, 0, canvas.width, SHELF_Y);
+
+    ctx.fillStyle = palette.wallpaperAccent;
+    const step = 30;
+    for (let gy = 10; gy < SHELF_Y; gy += step) {
+      for (let gx = 10; gx < canvas.width; gx += step) {
+        ctx.fillRect(gx, gy, 4, 4);
+      }
+    }
+  }
+
+  function drawShelf() {
+    ctx.fillStyle = palette.shelfBrown;
+    ctx.fillRect(0, SHELF_Y, canvas.width, SHELF_HEIGHT);
+    ctx.fillStyle = palette.potBrown;
+    ctx.fillRect(0, SHELF_Y, canvas.width, 4);
+
+    // текстура древесных волокон
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+    for (let gx = 6; gx < canvas.width; gx += 37) {
+      ctx.fillRect(gx, SHELF_Y + 7, 18, 2);
+    }
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    for (let gx = 20; gx < canvas.width; gx += 53) {
+      ctx.fillRect(gx, SHELF_Y + 13, 14, 2);
+    }
+  }
+
+  function drawCat() {
+    const x = Math.round(cat.x);
+    const y = Math.round(cat.y);
+
+    // тело
+    ctx.fillStyle = palette.catOrange;
+    ctx.fillRect(x + 4, y + 10, 32, 26);
+
+    // тень-обводка снизу
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x + 4, y + 34, 32, 2);
+
+    // треугольные уши
+    ctx.fillStyle = palette.catOrange;
+    ctx.fillRect(x + 6, y + 2, 8, 8);
+    ctx.fillRect(x + 26, y + 2, 8, 8);
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x + 6, y + 2, 8, 2);
+    ctx.fillRect(x + 26, y + 2, 8, 2);
+    ctx.fillRect(x + 6, y + 2, 2, 6);
+    ctx.fillRect(x + 32, y + 2, 2, 6);
+
+    // глаза
+    ctx.fillStyle = palette.catWhite;
+    ctx.fillRect(x + 10, y + 16, 6, 6);
+    ctx.fillRect(x + 24, y + 16, 6, 6);
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x + 12, y + 18, 2, 2);
+    ctx.fillRect(x + 26, y + 18, 2, 2);
+
+    // нос
+    ctx.fillStyle = palette.catPink;
+    ctx.fillRect(x + 18, y + 22, 4, 3);
+
+    // полосатый хвост
+    ctx.fillStyle = palette.catOrange;
+    ctx.fillRect(x + 34, y + 20, 10, 6);
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x + 34, y + 20, 10, 2);
+    ctx.fillRect(x + 37, y + 22, 2, 4);
+    ctx.fillRect(x + 41, y + 22, 2, 4);
+  }
+
+  const ITEM_SIZE = 30;
+  const baseSpawnInterval = 3000;
+  const MAX_ITEMS = 15; // защита от неограниченного роста, если игрок не толкает предметы
+
+  const itemTypes = [
+    { name: 'mug', isSafe: true, color: '#8B4513', points: 10 },
+    { name: 'flower', isSafe: true, color: '#FF69B4', points: 15 },
+    { name: 'food', isSafe: true, color: '#FFD700', points: 20 },
+    { name: 'vase', isSafe: false, color: '#4169E1', points: -25 },
+    { name: 'tv', isSafe: false, color: '#2F4F4F', points: -30 }
+  ];
+
+  let items = [];
+  let lastSpawn = Date.now();
+  let level = 1;
+
+  function updateLevel() {
+    const newLevel = Math.floor(score / 100) + 1;
+    if (newLevel > level) {
+      level = newLevel;
+    }
+  }
+
+  function getSpawnInterval() {
+    return baseSpawnInterval / (1 + (level - 1) * 0.2);
+  }
+
+  function getRandomItemType() {
+    const dangerousRatio = Math.min(0.6, 0.2 + (level - 1) * 0.1);
+    const safeItems = itemTypes.filter((t) => t.isSafe);
+    const dangerousItems = itemTypes.filter((t) => !t.isSafe);
+    if (Math.random() < dangerousRatio) {
+      return dangerousItems[Math.floor(Math.random() * dangerousItems.length)];
+    }
+    return safeItems[Math.floor(Math.random() * safeItems.length)];
+  }
+
+  function spawnItem() {
+    const type = getRandomItemType();
+    const minX = SHELF_MARGIN;
+    const maxX = canvas.width - SHELF_MARGIN - ITEM_SIZE;
+    const x = minX + Math.random() * (maxX - minX);
+    items.push({
+      type,
+      x,
+      y: SHELF_Y - ITEM_SIZE,
+      width: ITEM_SIZE,
+      height: ITEM_SIZE
+    });
+  }
+
+  function updateItems(deltaTime) {
+    updateLevel();
+
+    const now = Date.now();
+    if (now - lastSpawn > getSpawnInterval() && items.length < MAX_ITEMS) {
+      spawnItem();
+      lastSpawn = now;
+    }
+
+    items.forEach((item) => {
+      if (item.isPushed) {
+        item.fallY += 5 * deltaTime;
+      }
+    });
+    items = items.filter((item) => !item.isPushed || item.fallY < canvas.height);
+  }
+
+  function drawMug(x, y) {
+    ctx.fillStyle = palette.mugBrown;
+    ctx.fillRect(x + 6, y + 8, 14, 18);
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x + 6, y + 8, 14, 2);
+
+    // ручка (C-образная)
+    ctx.fillStyle = palette.mugBrown;
+    ctx.fillRect(x + 20, y + 10, 4, 2);
+    ctx.fillRect(x + 22, y + 12, 3, 8);
+    ctx.fillRect(x + 20, y + 20, 4, 2);
+
+    // пар
+    ctx.fillStyle = palette.catWhite;
+    ctx.fillRect(x + 9, y + 2, 2, 4);
+    ctx.fillRect(x + 14, y, 2, 5);
+  }
+
+  function drawFlower(x, y) {
+    // горшок
+    ctx.fillStyle = palette.potBrown;
+    ctx.fillRect(x + 9, y + 22, 12, 7);
+
+    // стебель
+    ctx.fillStyle = palette.flowerGreen;
+    ctx.fillRect(x + 14, y + 12, 2, 11);
+
+    // лепестки вокруг центра
+    ctx.fillStyle = palette.flowerPink;
+    ctx.fillRect(x + 11, y + 4, 4, 4);
+    ctx.fillRect(x + 19, y + 4, 4, 4);
+    ctx.fillRect(x + 7, y + 8, 4, 4);
+    ctx.fillRect(x + 23, y + 8, 4, 4);
+    ctx.fillRect(x + 15, y + 4, 4, 4);
+
+    // центр
+    ctx.fillStyle = palette.foodYellow;
+    ctx.fillRect(x + 14, y + 7, 5, 5);
+  }
+
+  function drawFood(x, y) {
+    // печенье — блочный круг
+    ctx.fillStyle = palette.foodOrange;
+    ctx.fillRect(x + 9, y + 6, 14, 2);
+    ctx.fillRect(x + 5, y + 8, 22, 14);
+    ctx.fillRect(x + 9, y + 22, 14, 2);
+
+    // шоколадные крошки
+    ctx.fillStyle = palette.potBrown;
+    ctx.fillRect(x + 10, y + 12, 3, 3);
+    ctx.fillRect(x + 18, y + 14, 3, 3);
+    ctx.fillRect(x + 13, y + 18, 3, 3);
+  }
+
+  function drawVase(x, y) {
+    // узкое горлышко, широкое тело, узкое основание
+    ctx.fillStyle = palette.vaseBlue;
+    ctx.fillRect(x + 11, y + 2, 8, 6);
+    ctx.fillRect(x + 6, y + 8, 18, 14);
+    ctx.fillRect(x + 9, y + 22, 12, 4);
+
+    // декоративные полосы
+    ctx.fillStyle = palette.catWhite;
+    ctx.fillRect(x + 6, y + 12, 18, 2);
+    ctx.fillRect(x + 6, y + 18, 18, 2);
+  }
+
+  function drawTV(x, y) {
+    // корпус
+    ctx.fillStyle = palette.tvGray;
+    ctx.fillRect(x + 2, y + 4, 26, 20);
+
+    // экран
+    ctx.fillStyle = palette.tvScreen;
+    ctx.fillRect(x + 5, y + 7, 20, 14);
+
+    // антенна (V-образная, ступенчатая, контрастная тёмная — чтобы не сливаться с корпусом)
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x + 14, y + 3, 2, 2);
+    ctx.fillRect(x + 12, y + 1, 2, 2);
+    ctx.fillRect(x + 10, y - 1, 2, 2);
+    ctx.fillRect(x + 16, y + 3, 2, 2);
+    ctx.fillRect(x + 18, y + 1, 2, 2);
+    ctx.fillRect(x + 20, y - 1, 2, 2);
+  }
+
+  const itemDrawers = {
+    mug: drawMug,
+    flower: drawFlower,
+    food: drawFood,
+    vase: drawVase,
+    tv: drawTV
+  };
+
+  function drawItems() {
+    items.forEach((item) => {
+      const x = Math.round(item.x);
+      const y = Math.round(item.isPushed ? item.fallY : item.y);
+      const drawer = itemDrawers[item.type.name];
+      if (drawer) {
+        drawer(x, y);
+      } else {
+        ctx.fillStyle = item.type.color;
+        ctx.fillRect(x, y, item.width, item.height);
+      }
+    });
+  }
+
+  let spacePressedLastFrame = false;
+
+  function checkCollision(a, b) {
+    return (
+      a.x < b.x + b.width &&
+      a.x + a.width > b.x &&
+      a.y < b.y + b.height &&
+      a.y + a.height > b.y
+    );
+  }
+
+  function handlePush() {
+    const spaceDown = !!(keys[' '] || keys['Space']);
+    if (spaceDown && !spacePressedLastFrame) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (!item.isPushed && checkCollision(cat, item)) {
+          item.isPushed = true;
+          item.fallY = item.y;
+          score = Math.max(0, score + item.type.points);
+          break;
+        }
+      }
+    }
+    spacePressedLastFrame = spaceDown;
+  }
+
+  function drawUI() {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '20px monospace';
+    ctx.fillText('SCORE: ' + score, 20, 30);
+    ctx.fillText('LEVEL: ' + level, 20, 60);
+  }
+
+  let lastFrameTime = performance.now();
+
+  function gameLoop() {
+    const now = performance.now();
+    const rawDelta = (now - lastFrameTime) / 16.67;
+    // ограничиваем скачок дельты — иначе после сворачивания/переключения вкладки
+    // кот и предметы "телепортируются" за один кадр
+    const deltaTime = Math.min(rawDelta, 5);
+    lastFrameTime = now;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    updateCat(deltaTime);
+    handlePush();
+    updateItems(deltaTime);
+
+    drawBackground();
+    drawShelf();
+    drawItems();
+    drawCat();
+    drawUI();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
