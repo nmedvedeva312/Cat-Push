@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+- Added jump mechanic: gravity, vertical arc via Up arrow/W, lands back on the same shelf, double-jump prevented.
+- Added a second, upper shelf: items now spawn on either shelf, and pushing only affects items on the cat's current level.
+- Jump now switches shelf levels: a tall jump climbs from the lower shelf to the upper one, Down/S drops back down; landing on an item mid-air knocks it off, same as a Space push.
+- Walking into a dangerous item without jumping over it now costs points automatically, just like pushing it — safe items are unaffected, and jumping over a dangerous item avoids the penalty entirely.
+- Added a patrolling robot vacuum: bumping into it from the side costs points, but landing on top while jumping lets the cat ride it for a recurring bonus, and jumping again hops off.
+- Enlarged the cat sprite from 40×40 to 60×60 and gave it life: periodic blinking, idle tail sway, and squash/stretch while jumping and landing.
+- Fixed a bug where the cat would stay stuck floating in mid-air after leaving the vacuum — gravity now correctly resumes.
+- Added floating `+N`/`−N` popups whenever the score changes (push, dangerous-item collision, vacuum hit, ride bonus) for clear feedback on what just happened.
+- The vacuum ride bonus is now a one-time reward on landing (+15), not a recurring tick every half-second — riding forever was otherwise the optimal strategy.
+- Accidental collisions (a dangerous item without jumping, a side-hit from the vacuum) now cause a brief control freeze (~250ms) and a visible expanding ring at the point of impact — deliberate actions (pushing, stomping) stay instant.
 
 ## [1.0] - 2026-07-28
 First fully playable version of Cat Push — all mandatory requirements of the

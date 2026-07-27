@@ -70,16 +70,52 @@
   const ctx = canvas.getContext('2d');
 
   const SHELF_Y = 420;
+  const SHELF_Y_UPPER = 250;
   const SHELF_HEIGHT = 20;
   const SHELF_MARGIN = 20;
 
+  const JUMP_VELOCITY = -12; // прыжок на месте (уклонение/сбивание) — используется на верхней полке
+  const CLIMB_VELOCITY = -15; // прыжок с нижней полки на верхнюю
+  const GRAVITY = 0.6;
+
   const cat = {
-    x: 430,
-    y: SHELF_Y - 40,
-    width: 40,
-    height: 40,
-    speed: 4
+    x: 420,
+    y: SHELF_Y - 60,
+    width: 60,
+    height: 60,
+    speed: 4,
+    vy: 0,
+    isJumping: false,
+    shelfLevel: 0, // 0 = нижняя полка, 1 = верхняя (задача #12+)
+    isRidingVacuum: false,
+    stunnedUntil: 0
   };
+
+  const STUN_DURATION = 250; // короткая заморозка управления при случайном столкновении
+
+  let nextBlinkTime = Date.now() + 2000 + Math.random() * 2000;
+  let blinkUntil = 0;
+  let landingSquashUntil = 0;
+
+  const VACUUM_SIDE_PENALTY = -20;
+  const VACUUM_RIDE_BONUS = 15; // разовая награда за приземление, не за каждую секунду катания
+  const VACUUM_SHELF_SWITCH_INTERVAL = 10000;
+
+  const vacuum = {
+    x: 100,
+    y: 0,
+    width: 36,
+    height: 20,
+    speed: 2,
+    direction: 1,
+    shelfLevel: 0
+  };
+  let lastVacuumShelfSwitch = Date.now();
+  let vacuumSidePenaltyActive = false;
+
+  function getShelfSurfaceY(shelfLevel) {
+    return shelfLevel === 1 ? SHELF_Y_UPPER : SHELF_Y;
+  }
 
   const keys = {};
 
@@ -117,14 +153,216 @@
     keys[e.code] = false;
   });
 
+  // Всплывающие подписи "+N"/"-N" — наглядная обратная связь при изменении счёта
+  const SCORE_POPUP_DURATION = 800;
+  let scorePopups = [];
+
+  function spawnScorePopup(x, y, amount) {
+    scorePopups.push({
+      x,
+      y,
+      text: (amount > 0 ? '+' : '') + amount,
+      color: amount > 0 ? '#4CFF4C' : '#FF4C4C',
+      startTime: Date.now()
+    });
+  }
+
+  function updateAndDrawScorePopups() {
+    const now = Date.now();
+    scorePopups = scorePopups.filter((p) => now - p.startTime < SCORE_POPUP_DURATION);
+    scorePopups.forEach((p) => {
+      const progress = (now - p.startTime) / SCORE_POPUP_DURATION;
+      ctx.globalAlpha = 1 - progress;
+      ctx.fillStyle = p.color;
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(p.text, p.x, p.y - progress * 30);
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // Точка столкновения — расходящееся кольцо в месте случайного удара (не для намеренных действий)
+  const IMPACT_EFFECT_DURATION = 300;
+  let impactEffects = [];
+
+  function spawnImpactEffect(x, y) {
+    impactEffects.push({ x, y, startTime: Date.now() });
+  }
+
+  function updateAndDrawImpactEffects() {
+    const now = Date.now();
+    impactEffects = impactEffects.filter((e) => now - e.startTime < IMPACT_EFFECT_DURATION);
+    impactEffects.forEach((e) => {
+      const progress = (now - e.startTime) / IMPACT_EFFECT_DURATION;
+      ctx.globalAlpha = 1 - progress;
+      ctx.strokeStyle = '#FF4C4C';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 4 + progress * 16, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  }
+
   let score = 0;
+  let jumpPressedLastFrame = false;
+  let downPressedLastFrame = false;
+
+  function pushItem(item) {
+    item.isPushed = true;
+    item.fallY = item.y;
+    score = Math.max(0, score + item.type.points);
+    spawnScorePopup(item.x + item.width / 2, item.y, item.type.points);
+  }
+
+  function handleStomp() {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.isPushed && item.shelfLevel === cat.shelfLevel && checkCollision(cat, item)) {
+        pushItem(item);
+        break;
+      }
+    }
+  }
+
+  // Столкновение с опасным предметом без прыжка через него — штраф, как при толчке.
+  // Прыжок (cat.isJumping) уклоняется от этой проверки; безопасные предметы не задеваются пассивно.
+  function checkPassiveCollisions() {
+    if (cat.isJumping) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.isPushed && !item.type.isSafe && item.shelfLevel === cat.shelfLevel && checkCollision(cat, item)) {
+        const impactX = (cat.x + cat.width / 2 + item.x + item.width / 2) / 2;
+        const impactY = (cat.y + cat.height / 2 + item.y + item.height / 2) / 2;
+        pushItem(item);
+        spawnImpactEffect(impactX, impactY);
+        cat.stunnedUntil = Date.now() + STUN_DURATION;
+        break;
+      }
+    }
+  }
+
+  function updateVacuum(deltaTime) {
+    vacuum.x += vacuum.speed * vacuum.direction * deltaTime;
+    const minX = SHELF_MARGIN;
+    const maxX = canvas.width - SHELF_MARGIN - vacuum.width;
+    if (vacuum.x <= minX) {
+      vacuum.x = minX;
+      vacuum.direction = 1;
+    } else if (vacuum.x >= maxX) {
+      vacuum.x = maxX;
+      vacuum.direction = -1;
+    }
+
+    if (Date.now() - lastVacuumShelfSwitch > VACUUM_SHELF_SWITCH_INTERVAL) {
+      vacuum.shelfLevel = vacuum.shelfLevel === 0 ? 1 : 0;
+      lastVacuumShelfSwitch = Date.now();
+    }
+
+    vacuum.y = getShelfSurfaceY(vacuum.shelfLevel) - vacuum.height;
+  }
+
+  // Езда сверху даёт разовый бонус за приземление (не за каждую секунду катания — иначе
+  // выгоднее всего было бы просто кататься бесконечно). Столкновение сбоку на земле —
+  // штраф с короткой заморозкой и эффектом удара в точке контакта.
+  function checkVacuumCollision(deltaTime) {
+    if (cat.isRidingVacuum) {
+      const stillOnTop =
+        cat.shelfLevel === vacuum.shelfLevel &&
+        cat.x + cat.width > vacuum.x &&
+        cat.x < vacuum.x + vacuum.width;
+      if (!stillOnTop) {
+        cat.isRidingVacuum = false;
+        // сход с пылесоса — включаем гравитацию обратно, иначе кот зависает в воздухе
+        cat.isJumping = true;
+        cat.vy = 0;
+      } else {
+        cat.x += vacuum.speed * vacuum.direction * deltaTime;
+        const minX = SHELF_MARGIN;
+        const maxX = canvas.width - SHELF_MARGIN - cat.width;
+        cat.x = Math.max(minX, Math.min(maxX, cat.x));
+        cat.y = vacuum.y - cat.height;
+      }
+      return;
+    }
+
+    const overlapping = vacuum.shelfLevel === cat.shelfLevel && checkCollision(cat, vacuum);
+    if (!overlapping) {
+      vacuumSidePenaltyActive = false;
+      return;
+    }
+
+    if (cat.isJumping && cat.vy > 0) {
+      cat.isRidingVacuum = true;
+      cat.isJumping = false;
+      cat.vy = 0;
+      cat.shelfLevel = vacuum.shelfLevel;
+      cat.y = vacuum.y - cat.height;
+      score += VACUUM_RIDE_BONUS;
+      spawnScorePopup(cat.x + cat.width / 2, cat.y, VACUUM_RIDE_BONUS);
+    } else if (!cat.isJumping && !vacuumSidePenaltyActive) {
+      const impactX = (cat.x + cat.width / 2 + vacuum.x + vacuum.width / 2) / 2;
+      const impactY = (cat.y + cat.height / 2 + vacuum.y + vacuum.height / 2) / 2;
+      score = Math.max(0, score + VACUUM_SIDE_PENALTY);
+      vacuumSidePenaltyActive = true;
+      spawnScorePopup(cat.x + cat.width / 2, cat.y, VACUUM_SIDE_PENALTY);
+      spawnImpactEffect(impactX, impactY);
+      cat.stunnedUntil = Date.now() + STUN_DURATION;
+    }
+  }
 
   function updateCat(deltaTime) {
+    if (Date.now() < cat.stunnedUntil) return; // короткая заморозка после случайного столкновения
+
     if (keys['ArrowLeft'] || keys['a'] || keys['A']) cat.x -= cat.speed * deltaTime;
     if (keys['ArrowRight'] || keys['d'] || keys['D']) cat.x += cat.speed * deltaTime;
     const minX = SHELF_MARGIN;
     const maxX = canvas.width - SHELF_MARGIN - cat.width;
     cat.x = Math.max(minX, Math.min(maxX, cat.x));
+
+    const jumpDown = !!(keys['ArrowUp'] || keys['w'] || keys['W']);
+    if (jumpDown && !jumpPressedLastFrame && !cat.isJumping) {
+      cat.isRidingVacuum = false; // прыжок с пылесоса = обычное спрыгивание
+      // с нижней полки — высокий прыжок-подъём; с верхней — обычный прыжок на месте
+      cat.vy = cat.shelfLevel === 0 ? CLIMB_VELOCITY : JUMP_VELOCITY;
+      cat.isJumping = true;
+    }
+    jumpPressedLastFrame = jumpDown;
+
+    const downDown = !!(keys['ArrowDown'] || keys['s'] || keys['S']);
+    if (downDown && !downPressedLastFrame && !cat.isJumping && cat.shelfLevel === 1) {
+      cat.shelfLevel = 0;
+      cat.vy = 2; // небольшой начальный толчок — дальше кота несёт гравитация на нижнюю полку
+      cat.isJumping = true;
+    }
+    downPressedLastFrame = downDown;
+
+    if (cat.isJumping) {
+      cat.vy += GRAVITY * deltaTime;
+      cat.y += cat.vy * deltaTime;
+
+      // подъём с нижней полки: как только достигли высоты верхней — переключаем уровень
+      if (cat.shelfLevel === 0 && cat.vy < 0) {
+        const upperGroundY = getShelfSurfaceY(1) - cat.height;
+        if (cat.y <= upperGroundY) {
+          cat.shelfLevel = 1;
+        }
+      }
+
+      const groundY = getShelfSurfaceY(cat.shelfLevel) - cat.height;
+      if (cat.vy > 0 && cat.y >= groundY) {
+        cat.y = groundY;
+        cat.vy = 0;
+        cat.isJumping = false;
+        landingSquashUntil = Date.now() + 150;
+      }
+
+      // сбивание предмета приземлением сверху — только пока кот снижается
+      if (cat.vy > 0) {
+        handleStomp();
+      }
+    }
+
+    checkPassiveCollisions();
   }
 
   function drawBackground() {
@@ -140,64 +378,121 @@
     }
   }
 
-  function drawShelf() {
+  function drawShelf(y) {
     ctx.fillStyle = palette.shelfBrown;
-    ctx.fillRect(0, SHELF_Y, canvas.width, SHELF_HEIGHT);
+    ctx.fillRect(0, y, canvas.width, SHELF_HEIGHT);
     ctx.fillStyle = palette.potBrown;
-    ctx.fillRect(0, SHELF_Y, canvas.width, 4);
+    ctx.fillRect(0, y, canvas.width, 4);
 
     // текстура древесных волокон
     ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
     for (let gx = 6; gx < canvas.width; gx += 37) {
-      ctx.fillRect(gx, SHELF_Y + 7, 18, 2);
+      ctx.fillRect(gx, y + 7, 18, 2);
     }
     ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
     for (let gx = 20; gx < canvas.width; gx += 53) {
-      ctx.fillRect(gx, SHELF_Y + 13, 14, 2);
+      ctx.fillRect(gx, y + 13, 14, 2);
     }
+  }
+
+  function drawShelves() {
+    drawShelf(SHELF_Y);
+    drawShelf(SHELF_Y_UPPER);
+  }
+
+  function drawVacuum() {
+    const x = Math.round(vacuum.x);
+    const y = Math.round(vacuum.y);
+
+    ctx.fillStyle = palette.tvGray;
+    ctx.fillRect(x + 2, y + 3, vacuum.width - 4, vacuum.height - 5);
+
+    ctx.fillStyle = palette.catBlack;
+    ctx.fillRect(x, y + vacuum.height - 4, vacuum.width, 4);
+
+    ctx.fillStyle = palette.catPink;
+    ctx.fillRect(x + vacuum.width / 2 - 3, y + 1, 6, 4);
   }
 
   function drawCat() {
     const x = Math.round(cat.x);
     const y = Math.round(cat.y);
 
+    // моргание — раз в 2-4 сек, планируем следующее сразу после текущего
+    const now = Date.now();
+    if (now >= nextBlinkTime && now >= blinkUntil) {
+      blinkUntil = now + 150;
+      nextBlinkTime = now + 2000 + Math.random() * 2000;
+    }
+    const isBlinking = now < blinkUntil;
+
+    // покачивание хвоста на месте — только когда кот не в прыжке
+    const tailSway = cat.isJumping ? 0 : Math.round(Math.sin(now / 300) * 2);
+
+    // сжатие/растяжение: тянемся вверх при взлёте, сжимаемся при падении и коротко при приземлении
+    let scaleY = 1;
+    if (cat.isJumping) {
+      const vyNorm = Math.max(-1, Math.min(1, cat.vy / 15));
+      scaleY = 1 - vyNorm * 0.12;
+    } else if (now < landingSquashUntil) {
+      const remaining = (landingSquashUntil - now) / 150;
+      scaleY = 1 - remaining * 0.15;
+    }
+    const scaleX = 1 / scaleY;
+
+    const centerX = x + cat.width / 2;
+    const centerY = y + cat.height / 2;
+
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.scale(scaleX, scaleY);
+    ctx.translate(-centerX, -centerY);
+
     // тело
     ctx.fillStyle = palette.catOrange;
-    ctx.fillRect(x + 4, y + 10, 32, 26);
+    ctx.fillRect(x + 6, y + 15, 48, 39);
 
     // тень-обводка снизу
     ctx.fillStyle = palette.catBlack;
-    ctx.fillRect(x + 4, y + 34, 32, 2);
+    ctx.fillRect(x + 6, y + 51, 48, 3);
 
     // треугольные уши
     ctx.fillStyle = palette.catOrange;
-    ctx.fillRect(x + 6, y + 2, 8, 8);
-    ctx.fillRect(x + 26, y + 2, 8, 8);
+    ctx.fillRect(x + 9, y + 3, 12, 12);
+    ctx.fillRect(x + 39, y + 3, 12, 12);
     ctx.fillStyle = palette.catBlack;
-    ctx.fillRect(x + 6, y + 2, 8, 2);
-    ctx.fillRect(x + 26, y + 2, 8, 2);
-    ctx.fillRect(x + 6, y + 2, 2, 6);
-    ctx.fillRect(x + 32, y + 2, 2, 6);
+    ctx.fillRect(x + 9, y + 3, 12, 3);
+    ctx.fillRect(x + 39, y + 3, 12, 3);
+    ctx.fillRect(x + 9, y + 3, 3, 9);
+    ctx.fillRect(x + 48, y + 3, 3, 9);
 
-    // глаза
-    ctx.fillStyle = palette.catWhite;
-    ctx.fillRect(x + 10, y + 16, 6, 6);
-    ctx.fillRect(x + 24, y + 16, 6, 6);
-    ctx.fillStyle = palette.catBlack;
-    ctx.fillRect(x + 12, y + 18, 2, 2);
-    ctx.fillRect(x + 26, y + 18, 2, 2);
+    // глаза (или закрытые полоски при моргании)
+    if (isBlinking) {
+      ctx.fillStyle = palette.catBlack;
+      ctx.fillRect(x + 15, y + 27, 9, 2);
+      ctx.fillRect(x + 36, y + 27, 9, 2);
+    } else {
+      ctx.fillStyle = palette.catWhite;
+      ctx.fillRect(x + 15, y + 24, 9, 9);
+      ctx.fillRect(x + 36, y + 24, 9, 9);
+      ctx.fillStyle = palette.catBlack;
+      ctx.fillRect(x + 18, y + 27, 3, 3);
+      ctx.fillRect(x + 39, y + 27, 3, 3);
+    }
 
     // нос
     ctx.fillStyle = palette.catPink;
-    ctx.fillRect(x + 18, y + 22, 4, 3);
+    ctx.fillRect(x + 27, y + 33, 6, 5);
 
-    // полосатый хвост
+    // полосатый хвост — с покачиванием
     ctx.fillStyle = palette.catOrange;
-    ctx.fillRect(x + 34, y + 20, 10, 6);
+    ctx.fillRect(x + 51, y + 30 + tailSway, 15, 9);
     ctx.fillStyle = palette.catBlack;
-    ctx.fillRect(x + 34, y + 20, 10, 2);
-    ctx.fillRect(x + 37, y + 22, 2, 4);
-    ctx.fillRect(x + 41, y + 22, 2, 4);
+    ctx.fillRect(x + 51, y + 30 + tailSway, 15, 3);
+    ctx.fillRect(x + 56, y + 33 + tailSway, 3, 6);
+    ctx.fillRect(x + 62, y + 33 + tailSway, 3, 6);
+
+    ctx.restore();
   }
 
   const ITEM_SIZE = 30;
@@ -242,10 +537,12 @@
     const minX = SHELF_MARGIN;
     const maxX = canvas.width - SHELF_MARGIN - ITEM_SIZE;
     const x = minX + Math.random() * (maxX - minX);
+    const shelfLevel = Math.random() < 0.5 ? 0 : 1;
     items.push({
       type,
       x,
-      y: SHELF_Y - ITEM_SIZE,
+      y: getShelfSurfaceY(shelfLevel) - ITEM_SIZE,
+      shelfLevel,
       width: ITEM_SIZE,
       height: ITEM_SIZE
     });
@@ -392,10 +689,8 @@
     if (spaceDown && !spacePressedLastFrame) {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        if (!item.isPushed && checkCollision(cat, item)) {
-          item.isPushed = true;
-          item.fallY = item.y;
-          score = Math.max(0, score + item.type.points);
+        if (!item.isPushed && item.shelfLevel === cat.shelfLevel && checkCollision(cat, item)) {
+          pushItem(item);
           break;
         }
       }
@@ -425,12 +720,17 @@
     updateCat(deltaTime);
     handlePush();
     updateItems(deltaTime);
+    updateVacuum(deltaTime);
+    checkVacuumCollision(deltaTime);
 
     drawBackground();
-    drawShelf();
+    drawShelves();
     drawItems();
+    drawVacuum();
     drawCat();
     drawUI();
+    updateAndDrawScorePopups();
+    updateAndDrawImpactEffects();
 
     requestAnimationFrame(gameLoop);
   }
