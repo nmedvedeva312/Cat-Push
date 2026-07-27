@@ -40,8 +40,7 @@ earning points for safe ones and a penalty for dangerous ones.
 
 ## Play Online
 
-[Live Demo](https://username.github.io/cat-push) — replace with the real
-link after deployment (see below).
+[Live Demo](https://nmedvedeva312.github.io/Cat-Push/)
 
 ## Run Locally
 
