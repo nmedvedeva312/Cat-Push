@@ -6,11 +6,19 @@ earning points for safe ones and a penalty for dangerous ones.
 
 ## How to Play
 
-- **Move**: Arrow keys or WASD
-- **Push an item**: Space, while the cat is next to it
+- **Move**: Arrow keys or WASD (or the on-screen D-pad on touch devices)
+- **Jump**: Up arrow or W — climbs from the lower shelf to the upper one,
+  dodges a dangerous item you'd otherwise bump into, and knocks an item off
+  by landing on it
+- **Drop down**: Down arrow or S, from the upper shelf back to the lower one
+- **Push an item**: Space (or the on-screen action button), while the cat is
+  next to it
 - **Goal**: push safe items (mug, flower, food) for points, avoid dangerous
   ones (vase, TV) — items spawn faster and the share of dangerous ones grows
   with every level
+
+**Mobile**: open the link on a phone or tablet — touch controls (a D-pad and
+a push button) appear automatically, and the layout scales to fit any screen.
 
 ## Game Rules
 
@@ -27,7 +35,16 @@ earning points for safe ones and a penalty for dangerous ones.
 - A new item spawns at a random spot on the shelf every few seconds.
 - Push a **safe** item off the shelf to score points; push a **dangerous**
   one and you take a penalty instead.
+- Walking into a dangerous item without jumping over it costs points too, the
+  same as pushing it — jumping over it avoids the penalty entirely.
 - Your score never drops below 0, no matter how many dangerous items you push.
+
+**The robot vacuum**
+
+- A patrolling robot vacuum roams the shelves. Bump into it from the side
+  and you lose points, with a brief control freeze and an impact ring where
+  you got hit.
+- Jump onto it to ride it for a one-time bonus — jump again to hop off.
 
 **Difficulty progression**
 

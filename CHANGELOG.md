@@ -3,6 +3,11 @@
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+- Added responsive scaling: the game frame now fits any screen size (capped at native resolution on large screens) via a CSS transform, laying the groundwork for mobile support.
+- Added a "rotate your phone" prompt shown instead of the game on small portrait-oriented screens.
+- Added on-screen touch controls (D-pad + action button) shown only on touch-primary devices, feeding the same input state the keyboard already uses — the game is now playable on both computer and phone.
+
+## [2.0] - 2026-07-28
 - Added jump mechanic: gravity, vertical arc via Up arrow/W, lands back on the same shelf, double-jump prevented.
 - Added a second, upper shelf: items now spawn on either shelf, and pushing only affects items on the cat's current level.
 - Jump now switches shelf levels: a tall jump climbs from the lower shelf to the upper one, Down/S drops back down; landing on an item mid-air knocks it off, same as a Space push.
