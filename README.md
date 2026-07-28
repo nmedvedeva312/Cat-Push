@@ -16,6 +16,8 @@ earning points for safe ones and a penalty for dangerous ones.
 - **Goal**: push safe items (mug, flower, food) for points, avoid dangerous
   ones (vase, TV) — items spawn faster and the share of dangerous ones grows
   with every level
+- **Best score**: your highest score is saved on this device (shown as
+  "BEST") and persists across reloads — each run itself always starts from 0
 
 **Mobile**: open the link on a phone or tablet — touch controls (a D-pad and
 a push button) appear automatically, and the layout scales to fit any screen.

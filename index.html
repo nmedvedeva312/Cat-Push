@@ -12,6 +12,7 @@
     margin: 0;
     padding: 0;
     height: 100%;
+    height: 100dvh; /* учитывает скрытие/появление адресной строки мобильного браузера */
     overflow: hidden;
     background: #111;
     display: flex;
@@ -37,7 +38,9 @@
   }
 
   #gameCanvas {
-    width: 900px;
+    /* ширина задаётся динамически из JS (resizeGameToFit) под реальные
+       пропорции экрана — не фиксированный 900px, чтобы не оставалось
+       пустых полей на широких (относительно высоты) экранах телефонов */
     height: 600px;
     background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 100%);
     border-radius: 6px;
@@ -48,10 +51,9 @@
     -ms-interpolation-mode: nearest-neighbor;
   }
 
-  /* Скан-линии поверх canvas — эффект ЭЛТ */
+  /* Скан-линии поверх canvas — эффект ЭЛТ; ширина тоже задаётся из JS */
   .scanlines {
     position: absolute;
-    width: 900px;
     height: 600px;
     border-radius: 6px;
     pointer-events: none;
@@ -96,9 +98,35 @@
     }
   }
 
-  /* Экранное управление — показываем только на сенсорных устройствах */
+  /* Экранное управление — показываем только на сенсорных устройствах.
+     Живёт ВНУТРИ .tv-frame (не во viewport), поэтому масштабируется вместе
+     со всей игрой через тот же transform: scale() — не остаётся
+     константного размера, когда игра уменьшается под маленький экран.
+     Позиционировано в безопасной зоне под полкой (canvas y 440-600,
+     т.е. frame-y ~460-620) — там ничего не отрисовывается (подтверждено
+     кодом drawShelf/drawBackground, а не предположением), так что кнопки
+     не перекрывают полку, кота или предметы.
+     База отсчёта под размеры — реальный landscape-телефон (высота
+     viewport ~360-375px, что даёт heightScale~0.54-0.56): при таком
+     сжатии тач-таргеты в 44px (базовый HIG-минимум) визуально ужимаются
+     до ~24px — некликабельно. Поэтому базовые размеры здесь взяты крупнее
+     номинального минимума (72/80px), чтобы после сжатия рамкой реальный
+     отрисованный размер оставался близко к 40-45px на самых частых
+     мобильных экранах — компромисс, подтверждённый замером через
+     getBoundingClientRect на реальных viewport-размерах, а не на глаз. */
   .touch-controls {
     display: none;
+    position: absolute;
+    inset: 0;
+    pointer-events: none; /* сам контейнер прозрачен для тапов, кнопки внутри — нет */
+    /* Базовая единица 4px — все размеры и отступы кнопок кратны ей,
+       вместо случайных подобранных на глаз значений. */
+    --tc-unit: 4px;
+    --tc-gap: calc(var(--tc-unit) * 2); /* 8px — зазор между соседними тач-таргетами */
+    --tc-edge: calc(var(--tc-unit) * 4); /* 16px — отступ от левого/правого края канвы */
+    --tc-bottom: calc(var(--tc-unit) * 5); /* 20px — отступ от нижнего края канвы */
+    --tc-btn: calc(var(--tc-unit) * 18); /* 72px */
+    --tc-action-btn: calc(var(--tc-unit) * 20); /* 80px — крупнее, это основное частое действие */
   }
 
   @media (hover: none) and (pointer: coarse) {
@@ -107,89 +135,124 @@
     }
   }
 
+  /* D-pad в 2 ряда вместо классической 3×3-крестовины: Up сверху по
+     центру, Left/Down/Right одним рядом снизу. Такая раскладка вдвое
+     компактнее по высоте (2*tc-btn+tc-gap вместо 3*tc-btn+2*tc-gap),
+     что и высвобождает бюджет безопасной зоны под увеличенные кнопки. */
   .touch-controls .dpad {
-    position: fixed;
-    left: 16px;
-    bottom: 16px;
-    width: 150px;
-    height: 150px;
-    z-index: 10;
+    position: absolute;
+    left: var(--tc-edge);
+    bottom: var(--tc-bottom);
+    width: calc(var(--tc-btn) * 3 + var(--tc-gap) * 2);
+    height: calc(var(--tc-btn) * 2 + var(--tc-gap));
   }
 
   .touch-controls .action-btn {
-    position: fixed;
-    right: 24px;
-    bottom: 40px;
-    width: 84px;
-    height: 84px;
-    z-index: 10;
+    position: absolute;
+    right: var(--tc-edge);
+    bottom: var(--tc-bottom);
+    width: var(--tc-action-btn);
+    height: var(--tc-action-btn);
   }
 
   .touch-controls button {
     position: absolute;
+    pointer-events: auto;
     background: rgba(255, 255, 255, 0.15);
     border: 2px solid rgba(255, 255, 255, 0.35);
     border-radius: 12px;
     color: #fff;
     font-family: monospace;
-    font-size: 24px;
+    font-size: 26px;
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
   }
 
   .touch-controls .action-btn button {
     width: 100%;
     height: 100%;
     border-radius: 50%;
-    font-size: 16px;
+    font-size: 28px;
   }
 
-  .touch-controls .dpad button.dpad-up { top: 0; left: 50px; width: 50px; height: 50px; }
-  .touch-controls .dpad button.dpad-down { top: 100px; left: 50px; width: 50px; height: 50px; }
-  .touch-controls .dpad button.dpad-left { top: 50px; left: 0; width: 50px; height: 50px; }
-  .touch-controls .dpad button.dpad-right { top: 50px; left: 100px; width: 50px; height: 50px; }
+  .touch-controls .dpad button {
+    width: var(--tc-btn);
+    height: var(--tc-btn);
+  }
+  .touch-controls .dpad button.dpad-up {
+    top: 0;
+    left: calc(var(--tc-btn) + var(--tc-gap));
+  }
+  .touch-controls .dpad button.dpad-down {
+    top: calc(var(--tc-btn) + var(--tc-gap));
+    left: calc(var(--tc-btn) + var(--tc-gap));
+  }
+  .touch-controls .dpad button.dpad-left {
+    top: calc(var(--tc-btn) + var(--tc-gap));
+    left: 0;
+  }
+  .touch-controls .dpad button.dpad-right {
+    top: calc(var(--tc-btn) + var(--tc-gap));
+    left: calc((var(--tc-btn) + var(--tc-gap)) * 2);
+  }
 </style>
 </head>
 <body>
   <div class="tv-frame">
     <canvas id="gameCanvas" width="900" height="600"></canvas>
     <div class="scanlines"></div>
+    <div class="touch-controls">
+      <div class="dpad">
+        <button class="dpad-up" data-key="ArrowUp">▲</button>
+        <button class="dpad-down" data-key="ArrowDown">▼</button>
+        <button class="dpad-left" data-key="ArrowLeft">◀</button>
+        <button class="dpad-right" data-key="ArrowRight">▶</button>
+      </div>
+      <div class="action-btn">
+        <button data-key=" ">●</button>
+      </div>
+    </div>
   </div>
   <div class="rotate-prompt">
     <div class="icon">📱</div>
     <div>Поверните телефон, чтобы играть</div>
   </div>
 
-  <div class="touch-controls">
-    <div class="dpad">
-      <button class="dpad-up" data-key="ArrowUp">▲</button>
-      <button class="dpad-down" data-key="ArrowDown">▼</button>
-      <button class="dpad-left" data-key="ArrowLeft">◀</button>
-      <button class="dpad-right" data-key="ArrowRight">▶</button>
-    </div>
-    <div class="action-btn">
-      <button data-key=" ">●</button>
-    </div>
-  </div>
-
 <script>
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
-  const FRAME_WIDTH = 940;
-  const FRAME_HEIGHT = 640;
+  const FRAME_HEIGHT = 640; // высота рамки фиксирована — вся вертикальная раскладка игры завязана на ней
+  const BEZEL = 40; // общая толщина рамки по ширине (940 - 900 в исходном дизайне)
+  const MIN_CANVAS_WIDTH = 700;
+  const MAX_CANVAS_WIDTH = 1400; // не даём игре растягиваться абсурдно широко на ultra-wide десктопах
   const tvFrame = document.querySelector('.tv-frame');
+  const scanlinesEl = document.querySelector('.scanlines');
 
-  // Чистая функция — считает коэффициент масштаба отдельно от чтения живых
-  // window.innerWidth/innerHeight, чтобы её можно было протестировать напрямую.
-  function computeGameScale(viewportWidth, viewportHeight) {
-    return Math.min(viewportWidth / FRAME_WIDTH, viewportHeight / FRAME_HEIGHT, 1);
+  // Чистые функции — тестируемы напрямую, без чтения живых window.innerWidth/innerHeight.
+  function computeHeightScale(viewportHeight) {
+    return Math.min((viewportHeight * 0.96) / FRAME_HEIGHT, 1);
+  }
+
+  function computeCanvasWidth(viewportWidth, heightScale) {
+    const desired = Math.round((viewportWidth * 0.98) / heightScale) - BEZEL;
+    return Math.max(MIN_CANVAS_WIDTH, Math.min(MAX_CANVAS_WIDTH, desired));
   }
 
   function resizeGameToFit() {
-    const scale = computeGameScale(window.innerWidth, window.innerHeight);
-    tvFrame.style.transform = `scale(${scale})`;
+    const heightScale = computeHeightScale(window.innerHeight);
+    const canvasWidth = computeCanvasWidth(window.innerWidth, heightScale);
+
+    if (canvas.width !== canvasWidth) {
+      canvas.width = canvasWidth; // реальное разрешение отрисовки — вся игровая логика уже читает canvas.width динамически
+    }
+
+    canvas.style.width = canvasWidth + 'px';
+    scanlinesEl.style.width = canvasWidth + 'px';
+    tvFrame.style.width = (canvasWidth + BEZEL) + 'px';
+    tvFrame.style.transform = `scale(${heightScale})`;
   }
 
   window.addEventListener('load', resizeGameToFit);
@@ -206,11 +269,14 @@
   const CLIMB_VELOCITY = -15; // прыжок с нижней полки на верхнюю
   const GRAVITY = 0.6;
 
+  const CAT_SIZE = 78; // было 60 — увеличено для видимости после сжатия всей рамки на мобильных экранах
+  const CAT_DRAW_SCALE = CAT_SIZE / 60; // весь пиксель-арт кота нарисован в системе координат 60×60
+
   const cat = {
     x: 420,
-    y: SHELF_Y - 60,
-    width: 60,
-    height: 60,
+    y: SHELF_Y - CAT_SIZE,
+    width: CAT_SIZE,
+    height: CAT_SIZE,
     speed: 4,
     vy: 0,
     isJumping: false,
@@ -232,8 +298,8 @@
   const vacuum = {
     x: 100,
     y: 0,
-    width: 36,
-    height: 20,
+    width: 54, // было 36 — увеличено для видимости после сжатия рамки на мобильных экранах
+    height: 30, // было 20
     speed: 2,
     direction: 1,
     shelfLevel: 0
@@ -357,6 +423,8 @@
   }
 
   let score = 0;
+  const BEST_SCORE_KEY = 'catPushBestScore';
+  let bestScore = parseInt(localStorage.getItem(BEST_SCORE_KEY), 10) || 0;
   let jumpPressedLastFrame = false;
   let downPressedLastFrame = false;
 
@@ -598,7 +666,7 @@
 
     ctx.save();
     ctx.translate(centerX, centerY);
-    ctx.scale(scaleX, scaleY);
+    ctx.scale(scaleX * CAT_DRAW_SCALE, scaleY * CAT_DRAW_SCALE);
     ctx.translate(-centerX, -centerY);
 
     // тело
@@ -648,7 +716,8 @@
     ctx.restore();
   }
 
-  const ITEM_SIZE = 30;
+  const ITEM_SIZE = 48; // было 30 — увеличено для видимости после сжатия всей рамки на мобильных экранах
+  const ITEM_DRAW_SCALE = ITEM_SIZE / 30; // пиксель-арт предметов нарисован в системе координат 30×30
   const baseSpawnInterval = 3000;
   const MAX_ITEMS = 15; // защита от неограниченного роста, если игрок не толкает предметы
 
@@ -817,12 +886,19 @@
       const x = Math.round(item.x);
       const y = Math.round(item.isPushed ? item.fallY : item.y);
       const drawer = itemDrawers[item.type.name];
+      const centerX = x + item.width / 2;
+      const centerY = y + item.height / 2;
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.scale(ITEM_DRAW_SCALE, ITEM_DRAW_SCALE);
+      ctx.translate(-centerX, -centerY);
       if (drawer) {
         drawer(x, y);
       } else {
         ctx.fillStyle = item.type.color;
         ctx.fillRect(x, y, item.width, item.height);
       }
+      ctx.restore();
     });
   }
 
@@ -852,10 +928,16 @@
   }
 
   function drawUI() {
+    if (score > bestScore) {
+      bestScore = score;
+      localStorage.setItem(BEST_SCORE_KEY, bestScore);
+    }
+
     ctx.fillStyle = '#ffffff';
     ctx.font = '20px monospace';
     ctx.fillText('SCORE: ' + score, 20, 30);
-    ctx.fillText('LEVEL: ' + level, 20, 60);
+    ctx.fillText('BEST: ' + bestScore, 20, 60);
+    ctx.fillText('LEVEL: ' + level, 20, 90);
   }
 
   let lastFrameTime = performance.now();

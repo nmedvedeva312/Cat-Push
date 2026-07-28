@@ -3,6 +3,11 @@
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+- Added a persistent best-score record (`localStorage`): shown as "BEST" next to the current score, updates live whenever the current run beats it. The current run always starts from zero — only the displayed record persists across sessions/reloads.
+- Enlarged the cat, items, and vacuum sprites for better visibility on real phone screens, where the whole game frame is scaled down to fit a short viewport.
+- Fixed touch controls not scaling down with the game on small phone screens: they used to be fixed-pixel-sized and viewport-anchored, so they stayed full size while the game shrank to fit, visually dominating the screen. They now live inside `.tv-frame` and scale proportionally with it.
+- Fixed pillarboxing and control overlap on real phone screens: the canvas now resizes to the device's actual aspect ratio instead of a fixed 900:600 ratio (no more empty side margins), and the on-screen D-pad/action button are placed in the verified-empty area below the shelf instead of guessed-at corners.
+- Fixed on-screen D-pad buttons rendering too small (~24px) on typical phone-in-landscape screens: replaced the 3-row D-pad with a more compact 2-row layout (Up on top, Left/Down/Right in one row) and increased the base button size, so real on-screen size lands close to the ~44px touch-target guideline instead of well under it.
 
 ## [3.0] - 2026-07-28
 - Added responsive scaling: the game frame now fits any screen size (capped at native resolution on large screens) via a CSS transform, laying the groundwork for mobile support.
