@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+
+## [4.0] - 2026-07-28
+- Added a lives system: 3 lives, a life is lost only when a penalty would push the score below zero (score itself still never goes negative). Losing the 3rd life triggers a Game Over overlay (final score, best score, restart prompt) — press any key or tap to start over.
+- Added a level-up moment: gameplay briefly pauses and a "LEVEL N!" banner plays when you level up, instead of the level counter just silently ticking up.
+- Reworked jumping to be Mario-style variable-height: a quick tap is a small hop in place (for stomping items or landing on the vacuum without leaving the shelf), holding the key climbs from the lower shelf to the upper one. Tuned and verified against the worst-case frame-timing clamp so a tap never accidentally reaches the upper shelf and a hold always does. On the upper shelf (nowhere higher to go) every jump stays a small hop regardless of hold duration.
+- Increased the gap between the lower and upper shelf so the jump reads as a clearer, more deliberate action.
+- Fixed the cat, items, and vacuum appearing to float above the shelf with a visible gap: their pixel art is now scaled from its bottom edge instead of its center, so it stays flush with the shelf surface regardless of sprite size.
+- Fixed items being able to spawn overlapping each other on the same shelf.
+- Strengthened the reaction to accidental collisions (dangerous item, vacuum side-hit): longer control freeze, the cat flickers like a hit-flash, and the item/vacuum shakes on impact — on top of the existing impact ring, not replacing it.
+- Difficulty now also scales the vacuum itself: it patrols faster and switches shelves more often at higher levels, not just spawn rate/danger ratio.
+- Enlarged the cat, items, and vacuum further, specifically on touch devices (detected the same way as the on-screen controls) — the whole frame shrinks more aggressively to fit a short phone viewport, so mobile now gets bigger sprites than desktop instead of the same size for both.
 - Added a persistent best-score record (`localStorage`): shown as "BEST" next to the current score, updates live whenever the current run beats it. The current run always starts from zero — only the displayed record persists across sessions/reloads.
 - Enlarged the cat, items, and vacuum sprites for better visibility on real phone screens, where the whole game frame is scaled down to fit a short viewport.
 - Fixed touch controls not scaling down with the game on small phone screens: they used to be fixed-pixel-sized and viewport-anchored, so they stayed full size while the game shrank to fit, visually dominating the screen. They now live inside `.tv-frame` and scale proportionally with it.

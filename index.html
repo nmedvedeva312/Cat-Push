@@ -224,6 +224,12 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
+  // Тот же признак, что и в CSS-медиазапросе для .touch-controls — используется
+  // ниже, чтобы увеличить спрайты именно на тач-устройствах: там вся рамка
+  // сжимается сильнее под короткий viewport, и одинаковый с десктопом размер
+  // выглядит слишком мелким.
+  const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
   const FRAME_HEIGHT = 640; // высота рамки фиксирована — вся вертикальная раскладка игры завязана на ней
   const BEZEL = 40; // общая толщина рамки по ширине (940 - 900 в исходном дизайне)
   const MIN_CANVAS_WIDTH = 700;
@@ -261,15 +267,21 @@
   resizeGameToFit();
 
   const SHELF_Y = 420;
-  const SHELF_Y_UPPER = 250;
+  const SHELF_Y_UPPER = 210; // было 250 — больше пространства между полками, прыжок читается яснее
   const SHELF_HEIGHT = 20;
   const SHELF_MARGIN = 20;
 
-  const JUMP_VELOCITY = -12; // прыжок на месте (уклонение/сбивание) — используется на верхней полке
-  const CLIMB_VELOCITY = -15; // прыжок с нижней полки на верхнюю
+  // Один и тот же прыжок с обеих полок: короткое нажатие — маленький хоп на
+  // месте (сбить предмет/запрыгнуть на пылесос, не покидая полку); удержание —
+  // подъём на верхнюю полку (Марио-style variable jump height). Раньше прыжок
+  // с нижней полки был жёстко привязан к CLIMB_VELOCITY и всегда улетал наверх,
+  // не давая взаимодействовать с нижней полкой в прыжке.
+  const JUMP_VELOCITY = -12;
+  const JUMP_HOLD_GRAVITY_FACTOR = 0.25; // во сколько раз слабее гравитация, пока зажата клавиша прыжка
+  const JUMP_HOLD_CAP_MS = 260; // после этого гравитация всегда полная, даже если клавиша ещё зажата
   const GRAVITY = 0.6;
 
-  const CAT_SIZE = 78; // было 60 — увеличено для видимости после сжатия всей рамки на мобильных экранах
+  const CAT_SIZE = isTouchDevice ? 110 : 78; // на тач-устройствах крупнее — компенсирует более сильное сжатие рамки
   const CAT_DRAW_SCALE = CAT_SIZE / 60; // весь пиксель-арт кота нарисован в системе координат 60×60
 
   const cat = {
@@ -280,12 +292,13 @@
     speed: 4,
     vy: 0,
     isJumping: false,
+    jumpStartTime: 0,
     shelfLevel: 0, // 0 = нижняя полка, 1 = верхняя (задача #12+)
     isRidingVacuum: false,
     stunnedUntil: 0
   };
 
-  const STUN_DURATION = 250; // короткая заморозка управления при случайном столкновении
+  const STUN_DURATION = 650; // было 250 — более заметная пауза при случайном ударе ("как в Марио")
 
   let nextBlinkTime = Date.now() + 2000 + Math.random() * 2000;
   let blinkUntil = 0;
@@ -294,15 +307,17 @@
   const VACUUM_SIDE_PENALTY = -20;
   const VACUUM_RIDE_BONUS = 15; // разовая награда за приземление, не за каждую секунду катания
   const VACUUM_SHELF_SWITCH_INTERVAL = 10000;
+  const VACUUM_BASE_SPEED = 2;
 
   const vacuum = {
     x: 100,
     y: 0,
-    width: 54, // было 36 — увеличено для видимости после сжатия рамки на мобильных экранах
-    height: 30, // было 20
-    speed: 2,
+    width: isTouchDevice ? 76 : 54, // на тач-устройствах крупнее — компенсирует более сильное сжатие рамки
+    height: isTouchDevice ? 42 : 30,
+    speed: VACUUM_BASE_SPEED,
     direction: 1,
-    shelfLevel: 0
+    shelfLevel: 0,
+    shakeUntil: 0 // визуальная тряска при ударе сбоку, не влияет на физику
   };
   let lastVacuumShelfSwitch = Date.now();
   let vacuumSidePenaltyActive = false;
@@ -336,6 +351,10 @@
   // Не даём стрелкам и пробелу скроллить страницу, заодно отслеживаем нажатия
   const controlKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', ' '];
   window.addEventListener('keydown', (e) => {
+    if (gameOver) {
+      resetGame();
+      return;
+    }
     keys[e.key] = true;
     keys[e.code] = true;
     if (controlKeys.includes(e.code) || controlKeys.includes(e.key)) {
@@ -355,6 +374,10 @@
       'touchstart',
       (e) => {
         e.preventDefault();
+        if (gameOver) {
+          resetGame();
+          return;
+        }
         keys[key] = true;
       },
       { passive: false }
@@ -428,11 +451,70 @@
   let jumpPressedLastFrame = false;
   let downPressedLastFrame = false;
 
+  const MAX_LIVES = 3;
+  let lives = MAX_LIVES;
+  let gameOver = false;
+
+  const LEVEL_UP_PAUSE_MS = 1200; // логическая пауза при переходе на новый уровень
+  let levelUpPauseUntil = 0;
+
+  // Штраф отнимает очки как обычно, но если он увёл бы счёт ниже 0 —
+  // вместо ухода в минус теряется жизнь, а счёт просто фиксируется на 0.
+  function adjustScore(amount, x, y) {
+    if (amount < 0 && score + amount < 0) {
+      score = 0;
+      loseLife();
+    } else {
+      score = Math.max(0, score + amount);
+    }
+    if (x !== undefined) spawnScorePopup(x, y, amount);
+  }
+
+  function loseLife() {
+    lives -= 1;
+    if (lives <= 0) {
+      triggerGameOver();
+    }
+  }
+
+  function triggerGameOver() {
+    gameOver = true;
+  }
+
+  function resetGame() {
+    score = 0;
+    lives = MAX_LIVES;
+    gameOver = false;
+    level = 1;
+    levelUpPauseUntil = 0;
+    items = [];
+    lastSpawn = Date.now();
+    scorePopups = [];
+    impactEffects = [];
+
+    cat.x = 420;
+    cat.shelfLevel = 0;
+    cat.y = SHELF_Y - CAT_SIZE;
+    cat.vy = 0;
+    cat.isJumping = false;
+    cat.jumpStartTime = 0;
+    cat.isRidingVacuum = false;
+    cat.stunnedUntil = 0;
+
+    vacuum.x = 100;
+    vacuum.shelfLevel = 0;
+    vacuum.direction = 1;
+    vacuum.speed = VACUUM_BASE_SPEED;
+    vacuum.shakeUntil = 0;
+    vacuum.y = getShelfSurfaceY(vacuum.shelfLevel) - vacuum.height;
+    lastVacuumShelfSwitch = Date.now();
+    vacuumSidePenaltyActive = false;
+  }
+
   function pushItem(item) {
     item.isPushed = true;
     item.fallY = item.y;
-    score = Math.max(0, score + item.type.points);
-    spawnScorePopup(item.x + item.width / 2, item.y, item.type.points);
+    adjustScore(item.type.points, item.x + item.width / 2, item.y);
   }
 
   function handleStomp() {
@@ -447,6 +529,8 @@
 
   // Столкновение с опасным предметом без прыжка через него — штраф, как при толчке.
   // Прыжок (cat.isJumping) уклоняется от этой проверки; безопасные предметы не задеваются пассивно.
+  // Только для опасных предметов (и отдельно для пылесоса в checkVacuumCollision) — усиленный
+  // эффект удара: кольцо (как было) + тряска падающего предмета + более долгая заморозка кота.
   function checkPassiveCollisions() {
     if (cat.isJumping) return;
     for (let i = 0; i < items.length; i++) {
@@ -455,6 +539,7 @@
         const impactX = (cat.x + cat.width / 2 + item.x + item.width / 2) / 2;
         const impactY = (cat.y + cat.height / 2 + item.y + item.height / 2) / 2;
         pushItem(item);
+        item.shakeUntil = Date.now() + STUN_DURATION; // тряска во время падения, само падение не задерживается
         spawnImpactEffect(impactX, impactY);
         cat.stunnedUntil = Date.now() + STUN_DURATION;
         break;
@@ -463,6 +548,7 @@
   }
 
   function updateVacuum(deltaTime) {
+    vacuum.speed = getVacuumSpeed();
     vacuum.x += vacuum.speed * vacuum.direction * deltaTime;
     const minX = SHELF_MARGIN;
     const maxX = canvas.width - SHELF_MARGIN - vacuum.width;
@@ -474,7 +560,7 @@
       vacuum.direction = -1;
     }
 
-    if (Date.now() - lastVacuumShelfSwitch > VACUUM_SHELF_SWITCH_INTERVAL) {
+    if (Date.now() - lastVacuumShelfSwitch > getVacuumShelfSwitchInterval()) {
       vacuum.shelfLevel = vacuum.shelfLevel === 0 ? 1 : 0;
       lastVacuumShelfSwitch = Date.now();
     }
@@ -518,14 +604,13 @@
       cat.vy = 0;
       cat.shelfLevel = vacuum.shelfLevel;
       cat.y = vacuum.y - cat.height;
-      score += VACUUM_RIDE_BONUS;
-      spawnScorePopup(cat.x + cat.width / 2, cat.y, VACUUM_RIDE_BONUS);
+      adjustScore(VACUUM_RIDE_BONUS, cat.x + cat.width / 2, cat.y);
     } else if (!cat.isJumping && !vacuumSidePenaltyActive) {
       const impactX = (cat.x + cat.width / 2 + vacuum.x + vacuum.width / 2) / 2;
       const impactY = (cat.y + cat.height / 2 + vacuum.y + vacuum.height / 2) / 2;
-      score = Math.max(0, score + VACUUM_SIDE_PENALTY);
+      adjustScore(VACUUM_SIDE_PENALTY, cat.x + cat.width / 2, cat.y);
       vacuumSidePenaltyActive = true;
-      spawnScorePopup(cat.x + cat.width / 2, cat.y, VACUUM_SIDE_PENALTY);
+      vacuum.shakeUntil = Date.now() + STUN_DURATION; // тряска пылесоса, усиливает эффект удара
       spawnImpactEffect(impactX, impactY);
       cat.stunnedUntil = Date.now() + STUN_DURATION;
     }
@@ -543,9 +628,9 @@
     const jumpDown = !!(keys['ArrowUp'] || keys['w'] || keys['W']);
     if (jumpDown && !jumpPressedLastFrame && !cat.isJumping) {
       cat.isRidingVacuum = false; // прыжок с пылесоса = обычное спрыгивание
-      // с нижней полки — высокий прыжок-подъём; с верхней — обычный прыжок на месте
-      cat.vy = cat.shelfLevel === 0 ? CLIMB_VELOCITY : JUMP_VELOCITY;
+      cat.vy = JUMP_VELOCITY;
       cat.isJumping = true;
+      cat.jumpStartTime = Date.now();
     }
     jumpPressedLastFrame = jumpDown;
 
@@ -558,7 +643,14 @@
     downPressedLastFrame = downDown;
 
     if (cat.isJumping) {
-      cat.vy += GRAVITY * deltaTime;
+      // Удержание клавиши прыжка первые JUMP_HOLD_CAP_MS ослабляет гравитацию —
+      // короткое нажатие даёт маленький хоп, удержание поднимает на верхнюю полку.
+      // Только с нижней полки — на верхней подниматься некуда, поэтому прыжок
+      // там всегда маленький хоп независимо от удержания клавиши.
+      const isRising = cat.vy < 0;
+      const withinHoldWindow = Date.now() - cat.jumpStartTime < JUMP_HOLD_CAP_MS;
+      const gravity = (jumpDown && isRising && withinHoldWindow && cat.shelfLevel === 0) ? GRAVITY * JUMP_HOLD_GRAVITY_FACTOR : GRAVITY;
+      cat.vy += gravity * deltaTime;
       cat.y += cat.vy * deltaTime;
 
       // подъём с нижней полки: как только достигли высоты верхней — переключаем уровень
@@ -622,7 +714,9 @@
   }
 
   function drawVacuum() {
-    const x = Math.round(vacuum.x);
+    const isShaking = Date.now() < vacuum.shakeUntil;
+    const shakeX = isShaking ? Math.sin(Date.now() / 20) * 3 : 0;
+    const x = Math.round(vacuum.x + shakeX);
     const y = Math.round(vacuum.y);
 
     ctx.fillStyle = palette.tvGray;
@@ -661,13 +755,25 @@
     }
     const scaleX = 1 / scaleY;
 
-    const centerX = x + cat.width / 2;
-    const centerY = y + cat.height / 2;
+    // Пиксель-арт кота нарисован ниже в системе координат 60×60 (нижняя точка —
+    // тень на y+54). Масштабируем от НИЖНЕГО края (а не от центра), чтобы кот
+    // визуально стоял на полке независимо от CAT_DRAW_SCALE, а не "парил" над
+    // ней с растущим зазором при увеличении.
+    const anchorX = x + cat.width / 2;
+    const anchorY = y + cat.height;
+    const origAnchorX = x + 30;
+    const origAnchorY = y + 54;
+
+    const isStunned = now < cat.stunnedUntil;
 
     ctx.save();
-    ctx.translate(centerX, centerY);
+    if (isStunned) {
+      // мигание при заморозке после случайного столкновения — как invincibility-flicker в Марио
+      ctx.globalAlpha = Math.floor(now / 80) % 2 === 0 ? 1 : 0.35;
+    }
+    ctx.translate(anchorX, anchorY);
     ctx.scale(scaleX * CAT_DRAW_SCALE, scaleY * CAT_DRAW_SCALE);
-    ctx.translate(-centerX, -centerY);
+    ctx.translate(-origAnchorX, -origAnchorY);
 
     // тело
     ctx.fillStyle = palette.catOrange;
@@ -716,8 +822,12 @@
     ctx.restore();
   }
 
-  const ITEM_SIZE = 48; // было 30 — увеличено для видимости после сжатия всей рамки на мобильных экранах
+  const ITEM_SIZE = isTouchDevice ? 68 : 48; // на тач-устройствах крупнее — компенсирует более сильное сжатие рамки
   const ITEM_DRAW_SCALE = ITEM_SIZE / 30; // пиксель-арт предметов нарисован в системе координат 30×30
+  // Нижняя точка арта каждого предмета (в исходных координатах 30×30) — для
+  // масштабирования от нижнего края, чтобы предмет визуально стоял на полке,
+  // а не "парил" над ней с зазором, растущим вместе с ITEM_DRAW_SCALE.
+  const ITEM_ART_BOTTOM = { mug: 26, flower: 29, food: 24, vase: 26, tv: 24 };
   const baseSpawnInterval = 3000;
   const MAX_ITEMS = 15; // защита от неограниченного роста, если игрок не толкает предметы
 
@@ -737,7 +847,18 @@
     const newLevel = Math.floor(score / 100) + 1;
     if (newLevel > level) {
       level = newLevel;
+      levelUpPauseUntil = Date.now() + LEVEL_UP_PAUSE_MS; // логическая пауза + баннер "LEVEL UP"
     }
+  }
+
+  // Пылесос быстрее патрулирует и чаще меняет полку на высоких уровнях —
+  // усложнение не только от количества/доли опасных предметов, но и от самого пылесоса.
+  function getVacuumSpeed() {
+    return Math.min(5, VACUUM_BASE_SPEED + (level - 1) * 0.3);
+  }
+
+  function getVacuumShelfSwitchInterval() {
+    return Math.max(4000, VACUUM_SHELF_SWITCH_INTERVAL - (level - 1) * 500);
   }
 
   function getSpawnInterval() {
@@ -754,12 +875,32 @@
     return safeItems[Math.floor(Math.random() * safeItems.length)];
   }
 
-  function spawnItem() {
-    const type = getRandomItemType();
+  const ITEM_SPAWN_PADDING = 8; // минимальный зазор между соседними предметами на полке
+
+  // Пробуем несколько случайных X на выбранной полке, пока не найдём место без
+  // пересечения с уже стоящими (не сбитыми) предметами. Если за N попыток не
+  // нашли — пропускаем спавн в этом цикле, а не накладываем предметы друг на друга.
+  function findNonOverlappingX(shelfLevel) {
     const minX = SHELF_MARGIN;
     const maxX = canvas.width - SHELF_MARGIN - ITEM_SIZE;
-    const x = minX + Math.random() * (maxX - minX);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const x = minX + Math.random() * (maxX - minX);
+      const overlaps = items.some((item) =>
+        item.shelfLevel === shelfLevel &&
+        !item.isPushed &&
+        x < item.x + item.width + ITEM_SPAWN_PADDING &&
+        x + ITEM_SIZE + ITEM_SPAWN_PADDING > item.x
+      );
+      if (!overlaps) return x;
+    }
+    return null;
+  }
+
+  function spawnItem() {
+    const type = getRandomItemType();
     const shelfLevel = Math.random() < 0.5 ? 0 : 1;
+    const x = findNonOverlappingX(shelfLevel);
+    if (x === null) return; // полка занята — попробуем на следующем цикле спавна
     items.push({
       type,
       x,
@@ -882,16 +1023,26 @@
   };
 
   function drawItems() {
+    const now = Date.now();
     items.forEach((item) => {
-      const x = Math.round(item.x);
+      const isShaking = item.isShaking && now < item.shakeUntil;
+      const shakeX = isShaking ? Math.sin(now / 20) * 3 : 0;
+      const x = Math.round(item.x + shakeX);
       const y = Math.round(item.isPushed ? item.fallY : item.y);
       const drawer = itemDrawers[item.type.name];
-      const centerX = x + item.width / 2;
-      const centerY = y + item.height / 2;
+      const origBottom = ITEM_ART_BOTTOM[item.type.name] || 28;
+
+      // Масштабирование от нижнего края арта (см. ITEM_ART_BOTTOM) вместо
+      // центра — предмет стоит на полке вплотную, без визуального зазора.
+      const anchorX = x + item.width / 2;
+      const anchorY = y + item.height;
+      const origAnchorX = x + 15;
+      const origAnchorY = y + origBottom;
+
       ctx.save();
-      ctx.translate(centerX, centerY);
+      ctx.translate(anchorX, anchorY);
       ctx.scale(ITEM_DRAW_SCALE, ITEM_DRAW_SCALE);
-      ctx.translate(-centerX, -centerY);
+      ctx.translate(-origAnchorX, -origAnchorY);
       if (drawer) {
         drawer(x, y);
       } else {
@@ -938,6 +1089,41 @@
     ctx.fillText('SCORE: ' + score, 20, 30);
     ctx.fillText('BEST: ' + bestScore, 20, 60);
     ctx.fillText('LEVEL: ' + level, 20, 90);
+    ctx.fillText('LIVES: ' + '♥'.repeat(lives), 20, 120);
+  }
+
+  function drawLevelUpBanner() {
+    const progress = 1 - (levelUpPauseUntil - Date.now()) / LEVEL_UP_PAUSE_MS;
+    const pulse = 1 + Math.sin(progress * Math.PI) * 0.15;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(pulse, pulse);
+    ctx.fillStyle = '#4CFF4C';
+    ctx.font = 'bold 40px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('LEVEL ' + level + '!', 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'left';
+  }
+
+  function drawGameOverOverlay() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#FF4C4C';
+    ctx.font = 'bold 48px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 30);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '20px monospace';
+    ctx.fillText('SCORE: ' + score + '   BEST: ' + bestScore, canvas.width / 2, canvas.height / 2 + 10);
+    ctx.fillText('Press any key / tap to restart', canvas.width / 2, canvas.height / 2 + 45);
+    ctx.textAlign = 'left';
   }
 
   let lastFrameTime = performance.now();
@@ -952,11 +1138,14 @@
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    updateCat(deltaTime);
-    handlePush();
-    updateItems(deltaTime);
-    updateVacuum(deltaTime);
-    checkVacuumCollision(deltaTime);
+    const isLevelUpPaused = Date.now() < levelUpPauseUntil;
+    if (!gameOver && !isLevelUpPaused) {
+      updateCat(deltaTime);
+      handlePush();
+      updateItems(deltaTime);
+      updateVacuum(deltaTime);
+      checkVacuumCollision(deltaTime);
+    }
 
     drawBackground();
     drawShelves();
@@ -966,6 +1155,12 @@
     drawUI();
     updateAndDrawScorePopups();
     updateAndDrawImpactEffects();
+
+    if (gameOver) {
+      drawGameOverOverlay();
+    } else if (isLevelUpPaused) {
+      drawLevelUpBanner();
+    }
 
     requestAnimationFrame(gameLoop);
   }
