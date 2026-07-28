@@ -3,6 +3,8 @@
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+
+## [3.0] - 2026-07-28
 - Added responsive scaling: the game frame now fits any screen size (capped at native resolution on large screens) via a CSS transform, laying the groundwork for mobile support.
 - Added a "rotate your phone" prompt shown instead of the game on small portrait-oriented screens.
 - Added on-screen touch controls (D-pad + action button) shown only on touch-primary devices, feeding the same input state the keyboard already uses — the game is now playable on both computer and phone.
